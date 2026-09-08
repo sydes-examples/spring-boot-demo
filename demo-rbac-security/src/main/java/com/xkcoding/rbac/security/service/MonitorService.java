@@ -63,13 +63,16 @@ public class MonitorService {
      * @param names 用户名列表
      */
     public void kickout(List<String> names) {
+        // 过滤空白及重复的用户名，避免生成无效或重复的 Redis key
+        List<String> distinctNames = names.stream().filter(StrUtil::isNotBlank).distinct().collect(Collectors.toList());
+
         // 清除 Redis 中的 JWT 信息
-        List<String> redisKeys = names.parallelStream().map(s -> Consts.REDIS_JWT_KEY_PREFIX + s).collect(Collectors.toList());
+        List<String> redisKeys = distinctNames.parallelStream().map(s -> Consts.REDIS_JWT_KEY_PREFIX + s).collect(Collectors.toList());
         redisUtil.delete(redisKeys);
 
         // 获取当前用户名
         String currentUsername = SecurityUtil.getCurrentUsername();
-        names.parallelStream().forEach(name -> {
+        distinctNames.parallelStream().forEach(name -> {
             // TODO: 通知被踢出的用户已被当前登录用户踢出，
             //  后期考虑使用 websocket 实现，具体伪代码实现如下。
             //  String message = "您已被用户【" + currentUsername + "】手动下线！";
