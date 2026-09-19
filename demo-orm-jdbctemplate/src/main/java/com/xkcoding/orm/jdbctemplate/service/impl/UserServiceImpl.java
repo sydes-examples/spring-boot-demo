@@ -37,9 +37,13 @@ public class UserServiceImpl implements IUserService {
      *
      * @param user 用户实体
      * @return 保存成功 {@code true} 保存失败 {@code false}
+     * @throws IllegalArgumentException 用户名为空时抛出，此时用户不会被保存
      */
     @Override
     public Boolean save(User user) {
+        if (StrUtil.isBlank(user.getName())) {
+            throw new IllegalArgumentException("用户名不能为空");
+        }
         String rawPass = user.getPassword();
         String salt = IdUtil.simpleUUID();
         String pass = SecureUtil.md5(rawPass + Const.SALT_PREFIX + salt);
