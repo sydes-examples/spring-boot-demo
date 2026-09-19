@@ -5,6 +5,7 @@ import com.xkcoding.orm.jdbctemplate.entity.User;
 import com.xkcoding.orm.jdbctemplate.service.IUserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -47,8 +48,15 @@ public class UserController {
 
     @GetMapping("/user/{id}")
     public Dict getUser(@PathVariable Long id) {
-        User user = userService.getUser(id);
-        return Dict.create().set("code", 200).set("msg", "成功").set("data", user);
+        // findOneById() throws EmptyResultDataAccessException on a missing row
+        // instead of returning null; left unhandled this surfaced as a plain
+        // 500 with a stack trace instead of a clean not-found response.
+        try {
+            User user = userService.getUser(id);
+            return Dict.create().set("code", 200).set("msg", "成功").set("data", user);
+        } catch (EmptyResultDataAccessException e) {
+            return Dict.create().set("code", 404).set("msg", "用户不存在").set("data", null);
+        }
     }
 
     @GetMapping("/user")
