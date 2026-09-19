@@ -35,6 +35,17 @@ import java.util.concurrent.TimeUnit;
 @Configuration
 @Slf4j
 public class JwtUtil {
+    /**
+     * Redis 中 "上一个" JWT 的 key 后缀，用于 token 刷新后的宽限期校验，
+     * 避免并发请求在 token 刚刚被刷新时被误判为 {@link Status#TOKEN_OUT_OF_CTRL}
+     */
+    private static final String REDIS_JWT_PREVIOUS_KEY_SUFFIX = ":previous";
+
+    /**
+     * token 刷新后，旧 token 仍然有效的宽限期（毫秒），默认 60 秒
+     */
+    private static final long PREVIOUS_TOKEN_GRACE_PERIOD_MILLIS = 60000L;
+
     @Autowired
     private JwtConfig jwtConfig;
 
@@ -62,8 +73,17 @@ public class JwtUtil {
         }
 
         String jwt = builder.compact();
+        String redisKey = Consts.REDIS_JWT_KEY_PREFIX + subject;
+
+        // 如果 redis 中已存在旧 token，则将其保留一小段宽限期，避免 token 刷新瞬间
+        // 仍在途中的并发请求（携带旧 token）被误判为 TOKEN_OUT_OF_CTRL
+        String oldJwt = stringRedisTemplate.opsForValue().get(redisKey);
+        if (StrUtil.isNotBlank(oldJwt) && !StrUtil.equals(oldJwt, jwt)) {
+            stringRedisTemplate.opsForValue().set(redisKey + REDIS_JWT_PREVIOUS_KEY_SUFFIX, oldJwt, PREVIOUS_TOKEN_GRACE_PERIOD_MILLIS, TimeUnit.MILLISECONDS);
+        }
+
         // 将生成的JWT保存至Redis
-        stringRedisTemplate.opsForValue().set(Consts.REDIS_JWT_KEY_PREFIX + subject, jwt, ttl, TimeUnit.MILLISECONDS);
+        stringRedisTemplate.opsForValue().set(redisKey, jwt, ttl, TimeUnit.MILLISECONDS);
         return jwt;
     }
 
@@ -101,7 +121,12 @@ public class JwtUtil {
             // 校验redis中的JWT是否与当前的一致，不一致则代表用户已注销/用户在不同设备登录，均代表JWT已过期
             String redisToken = stringRedisTemplate.opsForValue().get(redisKey);
             if (!StrUtil.equals(jwt, redisToken)) {
-                throw new SecurityException(Status.TOKEN_OUT_OF_CTRL);
+                // 当前 token 与 redis 中记录的最新 token 不一致时，再检查一次是否命中
+                // 最近一次刷新前的旧 token（宽限期内仍然有效），避免刷新瞬间的并发请求被拒绝
+                String previousToken = stringRedisTemplate.opsForValue().get(redisKey + REDIS_JWT_PREVIOUS_KEY_SUFFIX);
+                if (!StrUtil.equals(jwt, previousToken)) {
+                    throw new SecurityException(Status.TOKEN_OUT_OF_CTRL);
+                }
             }
             return claims;
         } catch (ExpiredJwtException e) {
